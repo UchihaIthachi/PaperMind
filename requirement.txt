@@ -8,3 +8,6 @@ langchain-community
 python-dotenv
 huggingface_hub
 arxiv
+faiss-cpu
+torch
+transformers
