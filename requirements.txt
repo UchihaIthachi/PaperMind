@@ -1,0 +1,42 @@
+# Core LangChain and LangGraph
+langchain
+langchain-experimental
+langgraph
+langchain-google-genai
+# langchain-openai # Optional, if OpenAI models might be used
+
+# LLM Support (if not covered by specific langchain packages)
+litellm
+tiktoken
+
+# Vector Stores & Embeddings
+chromadb==0.4.24
+supabase-py
+sentence-transformers
+
+# External Services / Tools
+tavily-python
+boto3 # For Cloudflare R2
+PyPDF2 # For PDF parsing
+arxiv # For ArxivQueryRun (langchain_community.tools.arxiv.tool.ArxivQueryRun imports ArxivAPIWrapper which imports arxiv)
+
+# Web Framework & UI
+streamlit
+
+# Utilities
+python-dotenv
+numpy
+scikit-learn # For cosine_similarity in evaluation
+werkzeug # For secure_filename
+matplotlib # For plotting evaluation results
+
+# Testing
+pytest
+pytest-mock
+
+# Ensure specific versions if known to be critical from previous steps
+# e.g., chromadb==0.4.24
+# Add any other direct dependencies identified during development.
+# sqlalchemy and sqlalchemy_utils were installed with chromadb, often good to list explicitly if direct use or specific versions are needed.
+sqlalchemy
+sqlalchemy_utils
