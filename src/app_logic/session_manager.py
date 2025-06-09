@@ -1,5 +1,4 @@
 import streamlit as st
-from langchain.memory import ConversationBufferMemory
 import os # For checking env vars for R2 status
 
 # Attempt to import from the new structure
@@ -7,12 +6,25 @@ try:
     from src.utils.llm_utils import get_llm, get_embedding_model
     from src.db_managers.vector_store_manager import get_supabase_client, get_supabase_vector_store
     from src.db_managers.file_object_store import get_r2_client
+    from src.config.app_config import CHROMA_PERSISTENT_PATH # Added import
 except ImportError: # Fallback for local testing if src is not in PYTHONPATH
     # This might happen if running session_manager.py directly for tests without `src` in path
     print("WARN: session_manager running with fallback imports. Ensure 'src' is in PYTHONPATH for app execution.")
     from utils.llm_utils import get_llm, get_embedding_model
     from db_managers.vector_store_manager import get_supabase_client, get_supabase_vector_store
     from db_managers.file_object_store import get_r2_client
+    # Assuming app_config might also need a fallback if this script is run standalone
+    # However, direct execution is for testing, and config might be found differently or mocked.
+    # For simplicity, only handling the primary import path for CHROMA_PERSISTENT_PATH here.
+    # If direct testing of this script needs it, it would require specific test setup.
+    try:
+        from config.app_config import CHROMA_PERSISTENT_PATH
+    except ImportError:
+        # Fallback if run from a context where src.config is not directly available
+        # This is a simple attempt, real testing might need a proper path setup or mocking
+        print("WARN: Could not import CHROMA_PERSISTENT_PATH from config.app_config in fallback.")
+        CHROMA_PERSISTENT_PATH = "chroma_db_refactored" # Default fallback path
+
 
 
 def initialize_session_state():
@@ -67,15 +79,6 @@ def initialize_session_state():
         st.session_state.pdf_session_collection = None
         # This will be populated by process_and_store_chunks_in_chroma via streamlit_app.py
 
-    # Initialize Chat Memory
-    if "memory" not in st.session_state:
-        st.session_state.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True,
-            output_key="output"
-        )
-        print("INFO: Conversational memory initialized in session state.")
-
     # Initialize ChromaDB client (PersistentClient for session stores)
     # This was globally initialized in the old app.py.
     # It's better to have it managed, perhaps here or passed to where it's needed.
@@ -87,7 +90,7 @@ def initialize_session_state():
             # Reusing the path from the old app.py for the persistent client
             # This client will be passed to functions in vector_store_manager that need it.
             import chromadb
-            st.session_state.chromadb_client = chromadb.PersistentClient(path="chroma_db_refactored") # New path
+            st.session_state.chromadb_client = chromadb.PersistentClient(path=CHROMA_PERSISTENT_PATH) # Use constant
             print("INFO: ChromaDB persistent client initialized for session stores.")
         except Exception as e:
             print(f"ERROR: Failed to initialize ChromaDB persistent client: {e}")
@@ -108,7 +111,6 @@ if __name__ == '__main__':
     # print("- supabase_client, supabase_vector_store")
     # print("- r2_client")
     # print("- pdf_session_collection (initially None)")
-    # print("- memory")
     # print("- chromadb_client")
     print("Run this as part of a Streamlit app to test st.session_state interactions.")
     print("\nsession_manager.py test finished.")

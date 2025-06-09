@@ -5,7 +5,7 @@ from langchain_core.language_models.chat_models import BaseChatModel # For type 
 from langgraph.graph import StateGraph, END
 import functools # For using partial to pass llm to node
 
-# from src.config.app_config import GEMINI_LLM_MODEL_NAME # Not needed if llm instance is passed
+from src.config.app_config import SUMMARIZER_MAX_INPUT_CHARS
 
 # Define Summarizer State
 class SummarizerState(TypedDict):
@@ -52,10 +52,10 @@ def summarize_node(state: SummarizerState, llm: BaseChatModel) -> Dict[str, Any]
 
     # Add a limited amount of text to summarize to avoid exceeding token limits
     # This is a simple truncation; more sophisticated methods might be needed for very long texts.
-    max_summary_input_length = 10000 # Example character limit for text to summarize
-    if len(text_to_summarize) > max_summary_input_length:
-        print(f"WARN: Text to summarize exceeds {max_summary_input_length} chars. Truncating.")
-        text_to_summarize = text_to_summarize[:max_summary_input_length] + "..."
+    # max_summary_input_length = 10000 # Example character limit for text to summarize
+    if len(text_to_summarize) > SUMMARIZER_MAX_INPUT_CHARS:
+        print(f"WARN: Text to summarize exceeds {SUMMARIZER_MAX_INPUT_CHARS} chars. Truncating.")
+        text_to_summarize = text_to_summarize[:SUMMARIZER_MAX_INPUT_CHARS] + "..."
 
     messages.append(HumanMessage(content=f"Please summarize the following text:\n\n---\n{text_to_summarize}\n---"))
 

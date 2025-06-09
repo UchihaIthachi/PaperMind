@@ -29,6 +29,7 @@ numpy
 scikit-learn # For cosine_similarity in evaluation
 werkzeug # For secure_filename
 matplotlib # For plotting evaluation results
+langfuse # For observability
 
 # Testing
 pytest

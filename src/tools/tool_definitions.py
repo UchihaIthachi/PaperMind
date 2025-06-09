@@ -5,6 +5,9 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel # For llm type hint
 
+from langfuse import Langfuse # Added for custom span creation
+import json # For serializing complex objects for metadata
+
 # Attempt to import from the new structure
 try:
     from src.utils.retrieval_utils import expand_query, rerank_documents
@@ -45,79 +48,126 @@ def query_uploaded_pdfs_func(original_query: str, llm: BaseChatModel, st_objects
     Needs access to the LLM for expansion/reranking and synthesis,
     Streamlit objects for feedback, and st.session_state for the PDF collection.
     """
-    # Dynamically access pdf_session_collection from st.session_state via st_objects
     session_state = st_objects.get('session_state')
-    if not session_state:
-        return "Error: Session state not available to PDF search tool."
+    langfuse_client = None
+    if session_state and hasattr(session_state, 'langfuse_client'):
+        langfuse_client = session_state.langfuse_client
+
+    def try_update_span(span, **kwargs):
+        if span:
+            try:
+                span.update(**kwargs)
+            except Exception as e:
+                print(f"Langfuse: Error updating span: {e}")
+
+    def try_end_span(span, **kwargs):
+        if span:
+            try:
+                span.end(**kwargs)
+            except Exception as e:
+                print(f"Langfuse: Error ending span: {e}")
 
     pdf_collection = getattr(session_state, 'pdf_session_collection', None)
-
     if pdf_collection is None:
         return "No PDF documents have been uploaded for the current session. Please upload PDFs using the sidebar."
 
-    # Use st_objects for Streamlit calls to allow testing without st context
-    # st_info = st_objects.get('info', print) # UI Call Removed
-    # st_write = st_objects.get('write', print) # UI Call Removed
-    # st_spinner = st_objects.get('spinner', lambda x: type('dummy_spinner', (object,), {'__enter__': lambda: None, '__exit__': lambda *a: None})()) # UI Call Removed
-
-    # st_info(f"Enhancing query for session PDF search: '{original_query}'") # UI Call Removed
-    expanded_queries = expand_query(original_query, llm, num_expansions=2)
-    # st_write(f"Expanded queries for session PDFs: {expanded_queries}") # UI Call Removed
+    # Query Expansion
+    expanded_queries = []
+    pdf_query_expansion_span = None
+    try:
+        if langfuse_client:
+            pdf_query_expansion_span = langfuse_client.span(name="pdf_query_expansion", input={'query': original_query})
+        expanded_queries = expand_query(original_query, llm, num_expansions=2)
+        try_end_span(pdf_query_expansion_span, output={'expanded_queries': expanded_queries, 'count': len(expanded_queries)})
+    except Exception as e:
+        print(f"Error during PDF query expansion: {e}")
+        try_end_span(pdf_query_expansion_span, level='ERROR', status_message=str(e), output={'expanded_queries': [], 'count': 0})
+        # Decide if to proceed with original query or return error
+        expanded_queries = [original_query] # Fallback to original query
 
     all_retrieved_doc_texts = []
     retrieved_doc_ids = set()
+    initial_search_span = None
+    try:
+        if langfuse_client:
+            initial_search_span = langfuse_client.span(name="initial_vector_search_chroma", input={'expanded_queries': expanded_queries})
 
-    # with st_spinner(f"Searching session PDFs with expanded queries for: '{original_query}'..."): # UI Call Removed
-    for i, exp_query in enumerate(expanded_queries):
-        # st_write(f"Searching session PDFs with: \"{exp_query}\" (Expansion {i+1}/{len(expanded_queries)})") # UI Call Removed
-        # semantic_search_chroma will need the actual SentenceTransformer model, not the LC wrapper
-        # This needs to be passed or made accessible. For now, assuming it's handled by semantic_search_chroma's setup
-        # This highlights a dependency: semantic_search_chroma needs the raw embedding model.
-        # Let's assume it's passed via st_objects or semantic_search_chroma can get it.
-        # For now, this will likely break unless semantic_search_chroma is adapted or model passed.
-        # HACK: For now, this function won't work until embedding model for chroma is plumbed.
-        # This should be: results = semantic_search_chroma(exp_query, pdf_collection, st_objects['embedding_model_st'], top_k=RETRIEVAL_INITIAL_TOP_K)
-        results = {} # Placeholder
-        if 'embedding_model_st' in st_objects and pdf_collection:
-             results = semantic_search_chroma(exp_query, pdf_collection, st_objects['embedding_model_st'], top_k=RETRIEVAL_INITIAL_TOP_K)
-        else:
-            print("ERROR: embedding_model_st not found in st_objects for query_uploaded_pdfs_func")
-            return "Error: Session PDF search is not properly configured (missing embedding model)."
+        for i, exp_query in enumerate(expanded_queries):
+            query_specific_span = None
+            if langfuse_client:
+                query_specific_span = initial_search_span.span(name=f"chroma_search_sub_query_{i+1}", input={'query': exp_query})
 
+            results = {}
+            if 'embedding_model_st' in st_objects and pdf_collection:
+                results = semantic_search_chroma(exp_query, pdf_collection, st_objects['embedding_model_st'], top_k=RETRIEVAL_INITIAL_TOP_K)
+            else:
+                print("ERROR: embedding_model_st not found in st_objects for query_uploaded_pdfs_func")
+                # This error should ideally be caught by the main try-except or handled differently
+                # For now, if it occurs, it might bypass span ending.
+                return "Error: Session PDF search is not properly configured (missing embedding model)."
 
-        if results and results.get('documents') and results['documents'][0]:
-            current_query_docs = results['documents'][0]
-            current_query_ids = results['ids'][0]
-            for doc_id, doc_text in zip(current_query_ids, current_query_docs):
-                if doc_id not in retrieved_doc_ids:
-                    all_retrieved_doc_texts.append(doc_text)
-                    retrieved_doc_ids.add(doc_id)
+            doc_texts_for_query = []
+            if results and results.get('documents') and results['documents'][0]:
+                current_query_docs = results['documents'][0]
+                current_query_ids = results['ids'][0]
+                for doc_id, doc_text in zip(current_query_ids, current_query_docs):
+                    if doc_id not in retrieved_doc_ids:
+                        all_retrieved_doc_texts.append(doc_text)
+                        retrieved_doc_ids.add(doc_id)
+                        doc_texts_for_query.append(doc_text[:100] + "..." if len(doc_text) > 100 else doc_text) # Log truncated
+
+            try_end_span(query_specific_span, output={'retrieved_doc_count': len(doc_texts_for_query), 'retrieved_texts_preview': doc_texts_for_query})
+
+        try_end_span(initial_search_span, output={'total_unique_docs_retrieved': len(all_retrieved_doc_texts)})
+    except Exception as e:
+        print(f"Error during ChromaDB search: {e}")
+        try_end_span(initial_search_span, level='ERROR', status_message=str(e))
+        # Potentially return error or empty results if search fails critically
+        if not all_retrieved_doc_texts: # If search failed before retrieving anything
+             return f"Error searching session PDFs: {str(e)}"
+
 
     if not all_retrieved_doc_texts:
         return f"No relevant information found in the currently uploaded PDF documents for: '{original_query}' (after query expansion)."
 
-    temp_lc_documents = []
-    for i, content_str in enumerate(all_retrieved_doc_texts):
-        metadata = {"source": "chroma_session_pdf", "retrieved_id": list(retrieved_doc_ids)[i] if i < len(retrieved_doc_ids) else f"text_match_{i}"}
-        temp_lc_documents.append(Document(page_content=content_str, metadata=metadata))
+    temp_lc_documents = [Document(page_content=text, metadata={"id": doc_id}) for doc_id, text in zip(list(retrieved_doc_ids), all_retrieved_doc_texts)]
 
-    # st_info(f"Re-ranking {len(temp_lc_documents)} retrieved session PDF documents...") # UI Call Removed
-    reranked_lc_documents = rerank_documents(original_query, temp_lc_documents, llm, top_n_to_select=3)
+    # Reranking
+    reranked_lc_documents = []
+    pdf_reranking_span = None
+    try:
+        if langfuse_client:
+            pdf_reranking_span = langfuse_client.span(name="pdf_reranking", input={'doc_count': len(temp_lc_documents), 'query': original_query})
+        reranked_lc_documents = rerank_documents(original_query, temp_lc_documents, llm, top_n_to_select=3)
+        try_end_span(pdf_reranking_span, output={'reranked_doc_count': len(reranked_lc_documents),
+                                                 'reranked_docs_preview': [d.page_content[:100]+"..." for d in reranked_lc_documents]})
+    except Exception as e:
+        print(f"Error during PDF reranking: {e}")
+        try_end_span(pdf_reranking_span, level='ERROR', status_message=str(e))
+        # Fallback: use non-reranked documents if reranking fails? Or return error.
+        # For now, if reranking fails, it might proceed with empty reranked_lc_documents. This needs careful thought.
+        if not reranked_lc_documents: # If reranking failed and returned nothing
+            return f"Error reranking PDF documents: {str(e)}"
+
 
     if not reranked_lc_documents:
         return f"Could not determine the most relevant documents from session PDFs for '{original_query}' after re-ranking."
 
     context = "\n\n---\n\n".join([doc.page_content for doc in reranked_lc_documents])
-
-    # st_info("Synthesizing answer from re-ranked session PDF context...") # UI Call Removed
     prompt_text = f"Based ONLY on the following highly relevant context from uploaded PDF documents:\n\nContext:\n{context}\n\nAnswer the following query: {original_query}"
+
+    # Final LLM Synthesis
+    final_llm_span = None
     try:
+        if langfuse_client:
+            final_llm_span = langfuse_client.span(name="pdf_synthesis_llm_call", input={'prompt_length': len(prompt_text), 'context_docs_count': len(reranked_lc_documents)})
         response = llm.invoke(prompt_text)
-        return response.content if hasattr(response, 'content') else str(response)
+        result_content = response.content if hasattr(response, 'content') else str(response)
+        try_end_span(final_llm_span, output={'response_length': len(result_content), 'response_preview': result_content[:100]+"..."})
+        return result_content
     except Exception as e:
-        # st_error = st_objects.get('error', print)
-        # st_error(f"LLM error generating response from re-ranked session PDF context: {e}")
-        print(f"LLM error in query_uploaded_pdfs_func: {e}")
+        print(f"LLM error in query_uploaded_pdfs_func synthesis: {e}")
+        try_end_span(final_llm_span, level='ERROR', status_message=str(e))
         return f"Error generating response from re-ranked session PDF context: {str(e)}"
 
 # ArXiv Search Tool
@@ -135,52 +185,111 @@ def query_long_term_memory_func(original_query: str, llm: BaseChatModel, vector_
     Tool function to query Supabase long-term memory.
     Needs access to LLM, Supabase vector store, and Streamlit objects for feedback.
     """
+    session_state = st_objects.get('session_state')
+    langfuse_client = None
+    if session_state and hasattr(session_state, 'langfuse_client'):
+        langfuse_client = session_state.langfuse_client
+
+    def try_update_span(span, **kwargs):
+        if span:
+            try:
+                span.update(**kwargs)
+            except Exception as e:
+                print(f"Langfuse: Error updating span: {e}")
+
+    def try_end_span(span, **kwargs):
+        if span:
+            try:
+                span.end(**kwargs)
+            except Exception as e:
+                print(f"Langfuse: Error ending span: {e}")
+
     if vector_store is None:
         return "Long-term memory (Supabase) is not available or configured."
 
-    # st_info = st_objects.get('info', print) # UI Call Removed
-    # st_write = st_objects.get('write', print) # UI Call Removed
-    # st_spinner = st_objects.get('spinner', lambda x: type('dummy_spinner', (object,), {'__enter__': lambda: None, '__exit__': lambda *a: None})()) # UI Call Removed
+    # Query Expansion
+    expanded_queries = []
+    ltm_query_expansion_span = None
+    try:
+        if langfuse_client:
+            ltm_query_expansion_span = langfuse_client.span(name="ltm_query_expansion", input={'query': original_query})
+        expanded_queries = expand_query(original_query, llm, num_expansions=2)
+        try_end_span(ltm_query_expansion_span, output={'expanded_queries': expanded_queries, 'count': len(expanded_queries)})
+    except Exception as e:
+        print(f"Error during LTM query expansion: {e}")
+        try_end_span(ltm_query_expansion_span, level='ERROR', status_message=str(e), output={'expanded_queries': [], 'count': 0})
+        expanded_queries = [original_query] # Fallback
 
-    # st_info(f"Enhancing query for long-term memory search: '{original_query}'") # UI Call Removed
-    expanded_queries = expand_query(original_query, llm, num_expansions=2)
-    # st_write(f"Expanded queries for LTM: {expanded_queries}") # UI Call Removed
-
-    all_retrieved_docs = []
+    all_retrieved_docs = [] # Stores Langchain Document objects
     retrieved_doc_content_hashes = set()
+    initial_search_span_ltm = None
+    try:
+        if langfuse_client:
+            initial_search_span_ltm = langfuse_client.span(name="initial_vector_search_supabase", input={'expanded_queries': expanded_queries})
 
-    # with st_spinner(f"Searching long-term memory with expanded queries for: '{original_query}'..."): # UI Call Removed
-    for i, exp_query in enumerate(expanded_queries):
-        # st_write(f"Searching LTM with: \"{exp_query}\" (Expansion {i+1}/{len(expanded_queries)})") # UI Call Removed
-        retrieved_docs_for_exp_query = search_supabase_store(vector_store, exp_query, top_k=RETRIEVAL_INITIAL_TOP_K)
+        for i, exp_query in enumerate(expanded_queries):
+            query_specific_span_ltm = None
+            if langfuse_client:
+                query_specific_span_ltm = initial_search_span_ltm.span(name=f"supabase_search_sub_query_{i+1}", input={'query': exp_query})
 
-        for doc in retrieved_docs_for_exp_query:
-            content_hash = hash(doc.page_content)
-            if content_hash not in retrieved_doc_content_hashes:
-                all_retrieved_docs.append(doc)
-                retrieved_doc_content_hashes.add(content_hash)
+            retrieved_docs_for_exp_query = search_supabase_store(vector_store, exp_query, top_k=RETRIEVAL_INITIAL_TOP_K)
+
+            docs_preview_for_query = []
+            for doc in retrieved_docs_for_exp_query:
+                content_hash = hash(doc.page_content) # Simple way to check for uniqueness based on content
+                if content_hash not in retrieved_doc_content_hashes:
+                    all_retrieved_docs.append(doc) # Store the full Document object
+                    retrieved_doc_content_hashes.add(content_hash)
+                    docs_preview_for_query.append(doc.page_content[:100] + "..." if len(doc.page_content) > 100 else doc.page_content)
+
+            try_end_span(query_specific_span_ltm, output={'retrieved_doc_count': len(docs_preview_for_query),
+                                                          'retrieved_docs_preview': docs_preview_for_query})
+        try_end_span(initial_search_span_ltm, output={'total_unique_docs_retrieved': len(all_retrieved_docs)})
+    except Exception as e:
+        print(f"Error during Supabase search: {e}")
+        try_end_span(initial_search_span_ltm, level='ERROR', status_message=str(e))
+        if not all_retrieved_docs:
+            return f"Error searching long-term memory: {str(e)}"
+
 
     if not all_retrieved_docs:
         return f"No relevant information found in long-term memory for: '{original_query}' (after query expansion)."
 
-    # st_info(f"Re-ranking {len(all_retrieved_docs)} retrieved long-term memory documents...") # UI Call Removed
-    reranked_ltm_documents = rerank_documents(original_query, all_retrieved_docs, llm, top_n_to_select=3)
+    # Reranking
+    reranked_ltm_documents = []
+    ltm_reranking_span = None
+    try:
+        if langfuse_client:
+            ltm_reranking_span = langfuse_client.span(name="ltm_reranking", input={'doc_count': len(all_retrieved_docs), 'query': original_query})
+        # Pass the actual Document objects to rerank_documents
+        reranked_ltm_documents = rerank_documents(original_query, all_retrieved_docs, llm, top_n_to_select=3)
+        try_end_span(ltm_reranking_span, output={'reranked_doc_count': len(reranked_ltm_documents),
+                                                 'reranked_docs_preview': [d.page_content[:100]+"..." for d in reranked_ltm_documents]})
+    except Exception as e:
+        print(f"Error during LTM reranking: {e}")
+        try_end_span(ltm_reranking_span, level='ERROR', status_message=str(e))
+        if not reranked_ltm_documents:
+             return f"Error reranking LTM documents: {str(e)}"
 
     if not reranked_ltm_documents:
          return f"Could not determine the most relevant documents from long-term memory for '{original_query}' after re-ranking."
 
     context = "\n\n---\n\n".join([doc.page_content for doc in reranked_ltm_documents])
-
-    # st_info("Synthesizing answer from re-ranked long-term memory context...") # UI Call Removed
     prompt_text = f"Based ONLY on the following highly relevant context from the long-term knowledge base:\n\nContext:\n{context}\n\nAnswer the following query: {original_query}"
+
+    # Final LLM Synthesis
+    final_llm_span_ltm = None
     try:
+        if langfuse_client:
+            final_llm_span_ltm = langfuse_client.span(name="ltm_synthesis_llm_call", input={'prompt_length': len(prompt_text), 'context_docs_count': len(reranked_ltm_documents)})
         response = llm.invoke(prompt_text)
-        return response.content if hasattr(response, 'content') else str(response)
+        result_content = response.content if hasattr(response, 'content') else str(response)
+        try_end_span(final_llm_span_ltm, output={'response_length': len(result_content), 'response_preview': result_content[:100]+"..."})
+        return result_content
     except Exception as e:
-        # st_error = st_objects.get('error', print)
-        # st_error(f"LLM error generating response from re-ranked long-term memory context: {e}")
-        print(f"LLM error in query_long_term_memory_func: {e}")
-        return "Error generating response from re-ranked long-term memory context."
+        print(f"LLM error in query_long_term_memory_func synthesis: {e}")
+        try_end_span(final_llm_span_ltm, level='ERROR', status_message=str(e))
+        return f"Error generating response from re-ranked long-term memory context: {str(e)}"
 
 # Function to get all tools for the agent
 def get_all_tools(

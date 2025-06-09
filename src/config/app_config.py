@@ -19,6 +19,11 @@ R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID")
 R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
 R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
 
+# Langfuse Observability Configuration
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "http://localhost:3000") # Default for local development
+
 
 # --- Application Behavior Constants ---
 # LLM and Embedding Models
@@ -65,6 +70,8 @@ TAVILY_MAX_RESULTS = 3
 # Summarization Trigger
 # Max characters in retrieved tool context before summarization is triggered
 TOOL_CONTEXT_MAX_CHARS_FOR_SUMMARIZATION = 5000
+# Max characters for the input to the summarizer graph itself
+SUMMARIZER_MAX_INPUT_CHARS = 10000
 
 # Agent Behavior
 MAX_TOOL_RETRIES = 2  # Max number of retries for a failing tool (total attempts = 1 + MAX_TOOL_RETRIES)
@@ -83,3 +90,8 @@ if __name__ == '__main__':
     print(f"  RERANKING_TOP_N_SELECT: {RERANKING_TOP_N_SELECT}")
     print(f"  CHROMA_SESSION_COLLECTION_NAME: {CHROMA_SESSION_COLLECTION_NAME}")
     print(f"  CHUNK_SIZE: {CHUNK_SIZE}")
+    print(f"  TOOL_CONTEXT_MAX_CHARS_FOR_SUMMARIZATION: {TOOL_CONTEXT_MAX_CHARS_FOR_SUMMARIZATION}")
+    print(f"  SUMMARIZER_MAX_INPUT_CHARS: {SUMMARIZER_MAX_INPUT_CHARS}")
+    print(f"  LANGFUSE_PUBLIC_KEY: {'*' * 5 if LANGFUSE_PUBLIC_KEY else 'Not set'}") # Avoid printing actual keys
+    print(f"  LANGFUSE_SECRET_KEY: {'*' * 5 if LANGFUSE_SECRET_KEY else 'Not set'}")
+    print(f"  LANGFUSE_HOST: {LANGFUSE_HOST}")

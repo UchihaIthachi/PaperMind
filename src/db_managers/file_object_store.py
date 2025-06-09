@@ -17,6 +17,14 @@ from src.config.app_config import (
 
 # load_dotenv() # Handled by app_config.py
 
+# --- Module Overview ---
+# This module handles interactions with Cloudflare R2 object storage.
+# Currently, the application primarily utilizes the upload functionality (upload_file_to_r2).
+# Other R2 operations such as download, list, or delete files can be added here
+# if they become necessary for future application features.
+# The R2 client is initialized by get_r2_client(), which uses configuration
+# from src.config.app_config.py.
+
 _r2_client_instance = None # Cached client instance
 
 def get_r2_client():

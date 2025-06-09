@@ -14,6 +14,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))) #
 # The sys.path.append in evaluation script was '..' then 'src'.
 # Here, if streamlit_app.py is at root, 'src' itself is the top-level package for imports.
 
+# Langfuse imports
+from langfuse import Langfuse
+# from langfuse.callback import LangfuseTracer # LangfuseTracer is part of the Langfuse object in newer versions
+import uuid
+# os is already imported below, but good to ensure it's available early if needed for Langfuse env vars directly
+
 from src.utils.logger import initial_app_logging_config
 initial_app_logging_config() # Call once to set up logging for the whole app
 
@@ -32,7 +38,11 @@ from src.config.app_config import (
     AGENT_MAX_ITERATIONS,
     CHUNK_SIZE, CHUNK_OVERLAP, CHUNK_SEPARATORS,
     CHROMA_SESSION_COLLECTION_NAME,
-    TAVILY_API_KEY # Import for status check
+    TAVILY_API_KEY, # Import for status check
+    # Langfuse config (ensure these are loaded by the time main() is called)
+    LANGFUSE_PUBLIC_KEY,
+    LANGFUSE_SECRET_KEY,
+    LANGFUSE_HOST
 )
 from src.agent.graph import create_agent_graph, AgentState # Import LangGraph elements
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, ToolMessage # For chat history
@@ -54,6 +64,28 @@ def main():
 
     # Initialize session state (critical to do this early)
     initialize_session_state() # Sets up LLM, embedding models, DB clients, memory, etc.
+
+    # Initialize Langfuse client (ensure environment variables are set)
+    if "langfuse_client" not in st.session_state: # Initialize only once
+        if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY and LANGFUSE_HOST:
+            try:
+                langfuse_client = Langfuse(
+                    public_key=LANGFUSE_PUBLIC_KEY,
+                    secret_key=LANGFUSE_SECRET_KEY,
+                    host=LANGFUSE_HOST
+                )
+                st.session_state.langfuse_client = langfuse_client
+                logger.info("Langfuse client initialized successfully.")
+                st.sidebar.success("✅ Langfuse Tracing enabled.", icon="ιχ") # Using a generic icon
+            except Exception as e:
+                st.session_state.langfuse_client = None
+                logger.error(f"Failed to initialize Langfuse client: {e}. Tracing will be disabled.")
+                st.sidebar.warning(f"Langfuse not initialized: {e}. Tracing disabled.", icon="⚠️")
+        else:
+            st.session_state.langfuse_client = None
+            logger.info("Langfuse environment variables not fully set. Tracing disabled.")
+            st.sidebar.info("Langfuse tracing disabled (env vars not set).", icon="ℹ️")
+
 
     # Initialize LangGraph Agent (once per session)
     if "agent_graph_app" not in st.session_state:
@@ -266,19 +298,38 @@ def main():
 
             full_response_content = ""
             final_agent_finish_output = None
+            callbacks = []
+
+            if st.session_state.get("langfuse_client"):
+                try:
+                    from streamlit.runtime.scriptrunner import get_script_run_ctx
+                    ctx = get_script_run_ctx()
+                    streamlit_session_id = ctx.session_id if ctx else str(uuid.uuid4()) # Fallback session id
+
+                    # Generate a unique trace ID for this specific invocation
+                    current_trace_id = str(uuid.uuid4())
+
+                    tracer_handler = st.session_state.langfuse_client.get_langchain_handler(
+                        trace_name=f"PaperMind_Query_{current_trace_id[:8]}",
+                        session_id=streamlit_session_id,
+                        user_id=streamlit_session_id, # Using session_id as user_id for simplicity
+                        # trace_id=current_trace_id # Explicitly setting trace_id for the handler
+                        # Upon review, get_langchain_handler creates a trace, and we can pass these IDs.
+                        # The trace_id is for the root trace of this handler.
+                    )
+                    callbacks.append(tracer_handler)
+                    logger.info(f"Langfuse tracer configured for trace_name: PaperMind_Query_{current_trace_id[:8]}, session_id: {streamlit_session_id}")
+                except Exception as e:
+                    logger.error(f"Failed to create Langfuse tracer: {e}")
+                    st.warning(f"Langfuse tracer error: {e}")
 
             try:
-                # Stream events from the graph
-                # The StreamlitCallbackHandler is not directly compatible with LangGraph's stream().
-                # We need to manually process graph events for UI updates.
-                # Consider creating a custom callback or parsing logic here.
-
-                # For simplicity, let's use invoke() first to ensure graph runs, then adapt to stream() if time.
-                # The stream() is better for showing intermediate steps/thoughts.
-                # For now, with invoke(), we get the final state.
-
-                # Using invoke to get the final state:
-                final_state = st.session_state.agent_graph_app.invoke(graph_input, {"recursion_limit": AGENT_MAX_ITERATIONS})
+                # Stream events from the graph - invoke is used here
+                # Pass callbacks to the invoke method
+                final_state = st.session_state.agent_graph_app.invoke(
+                    graph_input,
+                    config={"callbacks": callbacks, "recursion_limit": AGENT_MAX_ITERATIONS}
+                )
 
                 # Extract final response from agent_outcome or the last relevant AIMessage in chat_history
                 if final_state and isinstance(final_state.get("agent_outcome"), AgentFinish):
