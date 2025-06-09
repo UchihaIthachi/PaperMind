@@ -39,53 +39,59 @@ except ImportError: # Fallback for local testing if src is not in PYTHONPATH
 # For now, let's assume it's simple enough to be initialized directly in get_all_tools.
 
 # PDF RAG Tool Function (Session ChromaDB)
-def query_uploaded_pdfs_func(original_query: str, llm: BaseChatModel, pdf_collection: object, st_objects: dict) -> str:
+def query_uploaded_pdfs_func(original_query: str, llm: BaseChatModel, st_objects: dict) -> str:
     """
     Tool function to query PDFs uploaded in the current session (ChromaDB).
     Needs access to the LLM for expansion/reranking and synthesis,
-    the session's PDF collection (ChromaDB), and Streamlit objects for feedback.
+    Streamlit objects for feedback, and st.session_state for the PDF collection.
     """
+    # Dynamically access pdf_session_collection from st.session_state via st_objects
+    session_state = st_objects.get('session_state')
+    if not session_state:
+        return "Error: Session state not available to PDF search tool."
+
+    pdf_collection = getattr(session_state, 'pdf_session_collection', None)
+
     if pdf_collection is None:
         return "No PDF documents have been uploaded for the current session. Please upload PDFs using the sidebar."
 
     # Use st_objects for Streamlit calls to allow testing without st context
-    st_info = st_objects.get('info', print)
-    st_write = st_objects.get('write', print)
-    st_spinner = st_objects.get('spinner', lambda x: type('dummy_spinner', (object,), {'__enter__': lambda: None, '__exit__': lambda *a: None})())
+    # st_info = st_objects.get('info', print) # UI Call Removed
+    # st_write = st_objects.get('write', print) # UI Call Removed
+    # st_spinner = st_objects.get('spinner', lambda x: type('dummy_spinner', (object,), {'__enter__': lambda: None, '__exit__': lambda *a: None})()) # UI Call Removed
 
-
-    st_info(f"Enhancing query for session PDF search: '{original_query}'")
+    # st_info(f"Enhancing query for session PDF search: '{original_query}'") # UI Call Removed
     expanded_queries = expand_query(original_query, llm, num_expansions=2)
-    st_write(f"Expanded queries for session PDFs: {expanded_queries}")
+    # st_write(f"Expanded queries for session PDFs: {expanded_queries}") # UI Call Removed
 
     all_retrieved_doc_texts = []
     retrieved_doc_ids = set()
 
-    with st_spinner(f"Searching session PDFs with expanded queries for: '{original_query}'..."):
-        for i, exp_query in enumerate(expanded_queries):
-            st_write(f"Searching session PDFs with: \"{exp_query}\" (Expansion {i+1}/{len(expanded_queries)})")
-            # semantic_search_chroma will need the actual SentenceTransformer model, not the LC wrapper
-            # This needs to be passed or made accessible. For now, assuming it's handled by semantic_search_chroma's setup
-            # This highlights a dependency: semantic_search_chroma needs the raw embedding model.
-            # Let's assume it's passed via st_objects or semantic_search_chroma can get it.
-            # For now, this will likely break unless semantic_search_chroma is adapted or model passed.
-            # HACK: For now, this function won't work until embedding model for chroma is plumbed.
-            # This should be: results = semantic_search_chroma(exp_query, pdf_collection, st_objects['embedding_model_st'], top_k=RETRIEVAL_INITIAL_TOP_K)
-            results = {} # Placeholder
-            if 'embedding_model_st' in st_objects and pdf_collection:
-                 results = semantic_search_chroma(exp_query, pdf_collection, st_objects['embedding_model_st'], top_k=RETRIEVAL_INITIAL_TOP_K)
-            else:
-                print("ERROR: embedding_model_st not found in st_objects for query_uploaded_pdfs_func")
-                return "Error: Session PDF search is not properly configured (missing embedding model)."
+    # with st_spinner(f"Searching session PDFs with expanded queries for: '{original_query}'..."): # UI Call Removed
+    for i, exp_query in enumerate(expanded_queries):
+        # st_write(f"Searching session PDFs with: \"{exp_query}\" (Expansion {i+1}/{len(expanded_queries)})") # UI Call Removed
+        # semantic_search_chroma will need the actual SentenceTransformer model, not the LC wrapper
+        # This needs to be passed or made accessible. For now, assuming it's handled by semantic_search_chroma's setup
+        # This highlights a dependency: semantic_search_chroma needs the raw embedding model.
+        # Let's assume it's passed via st_objects or semantic_search_chroma can get it.
+        # For now, this will likely break unless semantic_search_chroma is adapted or model passed.
+        # HACK: For now, this function won't work until embedding model for chroma is plumbed.
+        # This should be: results = semantic_search_chroma(exp_query, pdf_collection, st_objects['embedding_model_st'], top_k=RETRIEVAL_INITIAL_TOP_K)
+        results = {} # Placeholder
+        if 'embedding_model_st' in st_objects and pdf_collection:
+             results = semantic_search_chroma(exp_query, pdf_collection, st_objects['embedding_model_st'], top_k=RETRIEVAL_INITIAL_TOP_K)
+        else:
+            print("ERROR: embedding_model_st not found in st_objects for query_uploaded_pdfs_func")
+            return "Error: Session PDF search is not properly configured (missing embedding model)."
 
 
-            if results and results.get('documents') and results['documents'][0]:
-                current_query_docs = results['documents'][0]
-                current_query_ids = results['ids'][0]
-                for doc_id, doc_text in zip(current_query_ids, current_query_docs):
-                    if doc_id not in retrieved_doc_ids:
-                        all_retrieved_doc_texts.append(doc_text)
-                        retrieved_doc_ids.add(doc_id)
+        if results and results.get('documents') and results['documents'][0]:
+            current_query_docs = results['documents'][0]
+            current_query_ids = results['ids'][0]
+            for doc_id, doc_text in zip(current_query_ids, current_query_docs):
+                if doc_id not in retrieved_doc_ids:
+                    all_retrieved_doc_texts.append(doc_text)
+                    retrieved_doc_ids.add(doc_id)
 
     if not all_retrieved_doc_texts:
         return f"No relevant information found in the currently uploaded PDF documents for: '{original_query}' (after query expansion)."
@@ -95,7 +101,7 @@ def query_uploaded_pdfs_func(original_query: str, llm: BaseChatModel, pdf_collec
         metadata = {"source": "chroma_session_pdf", "retrieved_id": list(retrieved_doc_ids)[i] if i < len(retrieved_doc_ids) else f"text_match_{i}"}
         temp_lc_documents.append(Document(page_content=content_str, metadata=metadata))
 
-    st_info(f"Re-ranking {len(temp_lc_documents)} retrieved session PDF documents...")
+    # st_info(f"Re-ranking {len(temp_lc_documents)} retrieved session PDF documents...") # UI Call Removed
     reranked_lc_documents = rerank_documents(original_query, temp_lc_documents, llm, top_n_to_select=3)
 
     if not reranked_lc_documents:
@@ -103,7 +109,7 @@ def query_uploaded_pdfs_func(original_query: str, llm: BaseChatModel, pdf_collec
 
     context = "\n\n---\n\n".join([doc.page_content for doc in reranked_lc_documents])
 
-    st_info("Synthesizing answer from re-ranked session PDF context...")
+    # st_info("Synthesizing answer from re-ranked session PDF context...") # UI Call Removed
     prompt_text = f"Based ONLY on the following highly relevant context from uploaded PDF documents:\n\nContext:\n{context}\n\nAnswer the following query: {original_query}"
     try:
         response = llm.invoke(prompt_text)
@@ -132,32 +138,32 @@ def query_long_term_memory_func(original_query: str, llm: BaseChatModel, vector_
     if vector_store is None:
         return "Long-term memory (Supabase) is not available or configured."
 
-    st_info = st_objects.get('info', print)
-    st_write = st_objects.get('write', print)
-    st_spinner = st_objects.get('spinner', lambda x: type('dummy_spinner', (object,), {'__enter__': lambda: None, '__exit__': lambda *a: None})())
+    # st_info = st_objects.get('info', print) # UI Call Removed
+    # st_write = st_objects.get('write', print) # UI Call Removed
+    # st_spinner = st_objects.get('spinner', lambda x: type('dummy_spinner', (object,), {'__enter__': lambda: None, '__exit__': lambda *a: None})()) # UI Call Removed
 
-    st_info(f"Enhancing query for long-term memory search: '{original_query}'")
+    # st_info(f"Enhancing query for long-term memory search: '{original_query}'") # UI Call Removed
     expanded_queries = expand_query(original_query, llm, num_expansions=2)
-    st_write(f"Expanded queries for LTM: {expanded_queries}")
+    # st_write(f"Expanded queries for LTM: {expanded_queries}") # UI Call Removed
 
     all_retrieved_docs = []
     retrieved_doc_content_hashes = set()
 
-    with st_spinner(f"Searching long-term memory with expanded queries for: '{original_query}'..."):
-        for i, exp_query in enumerate(expanded_queries):
-            st_write(f"Searching LTM with: \"{exp_query}\" (Expansion {i+1}/{len(expanded_queries)})")
-            retrieved_docs_for_exp_query = search_supabase_store(vector_store, exp_query, top_k=RETRIEVAL_INITIAL_TOP_K)
+    # with st_spinner(f"Searching long-term memory with expanded queries for: '{original_query}'..."): # UI Call Removed
+    for i, exp_query in enumerate(expanded_queries):
+        # st_write(f"Searching LTM with: \"{exp_query}\" (Expansion {i+1}/{len(expanded_queries)})") # UI Call Removed
+        retrieved_docs_for_exp_query = search_supabase_store(vector_store, exp_query, top_k=RETRIEVAL_INITIAL_TOP_K)
 
-            for doc in retrieved_docs_for_exp_query:
-                content_hash = hash(doc.page_content)
-                if content_hash not in retrieved_doc_content_hashes:
-                    all_retrieved_docs.append(doc)
-                    retrieved_doc_content_hashes.add(content_hash)
+        for doc in retrieved_docs_for_exp_query:
+            content_hash = hash(doc.page_content)
+            if content_hash not in retrieved_doc_content_hashes:
+                all_retrieved_docs.append(doc)
+                retrieved_doc_content_hashes.add(content_hash)
 
     if not all_retrieved_docs:
         return f"No relevant information found in long-term memory for: '{original_query}' (after query expansion)."
 
-    st_info(f"Re-ranking {len(all_retrieved_docs)} retrieved long-term memory documents...")
+    # st_info(f"Re-ranking {len(all_retrieved_docs)} retrieved long-term memory documents...") # UI Call Removed
     reranked_ltm_documents = rerank_documents(original_query, all_retrieved_docs, llm, top_n_to_select=3)
 
     if not reranked_ltm_documents:
@@ -165,7 +171,7 @@ def query_long_term_memory_func(original_query: str, llm: BaseChatModel, vector_
 
     context = "\n\n---\n\n".join([doc.page_content for doc in reranked_ltm_documents])
 
-    st_info("Synthesizing answer from re-ranked long-term memory context...")
+    # st_info("Synthesizing answer from re-ranked long-term memory context...") # UI Call Removed
     prompt_text = f"Based ONLY on the following highly relevant context from the long-term knowledge base:\n\nContext:\n{context}\n\nAnswer the following query: {original_query}"
     try:
         response = llm.invoke(prompt_text)
@@ -179,7 +185,7 @@ def query_long_term_memory_func(original_query: str, llm: BaseChatModel, vector_
 # Function to get all tools for the agent
 def get_all_tools(
     llm: BaseChatModel,
-    pdf_session_collection: object | None, # ChromaDB Collection
+    # pdf_session_collection is no longer directly passed; it's accessed via st.session_state
     supabase_vector_store: object | None, # SupabaseVectorStore instance
     # tavily_api_key is now imported from config
     st_embedding_model: object | None # Direct SentenceTransformer model for Chroma
@@ -187,6 +193,7 @@ def get_all_tools(
     """
     Initializes and returns a list of all tools available to the agent.
     Uses TAVILY_API_KEY from app_config.
+    The session PDF collection (ChromaDB) is accessed dynamically from st.session_state.
     """
     tools = []
 
@@ -198,13 +205,14 @@ def get_all_tools(
         'write': st.write if 'st' in globals() else print,
         'spinner': st.spinner if 'st' in globals() else lambda x: type('dummy_spinner', (object,), {'__enter__': lambda: None, '__exit__': lambda *a: None})(),
         'error': st.error if 'st' in globals() else print,
-        'embedding_model_st': st_embedding_model # Crucial for session PDF tool
+        'embedding_model_st': st_embedding_model, # Crucial for session PDF tool
+        'session_state': st.session_state if 'st' in globals() else None # Provide access to session_state
     }
 
     # PDF Session RAG Tool
     tools.append(Tool(
         name="QueryUploadedPDFs",
-        func=lambda query_str: query_uploaded_pdfs_func(query_str, llm, pdf_session_collection, streamlit_feedback_objects),
+        func=lambda query_str: query_uploaded_pdfs_func(query_str, llm, streamlit_feedback_objects),
         description="Use this tool to answer questions based on the content of PDF documents that the user has uploaded *during the current session*. If no PDFs are uploaded, inform the user to upload them first."
     ))
 
@@ -275,7 +283,8 @@ if __name__ == '__main__':
     #    dummy_supabase_store = DummyVectorStore()
     #    dummy_st_model = DummySTModel()
 
-    #    all_tools = get_all_tools(dummy_llm, dummy_pdf_collection, dummy_supabase_store, "dummy_tavily_key", dummy_st_model)
+    #    # Adjusted call for testing as pdf_session_collection is removed from direct args
+    #    all_tools = get_all_tools(dummy_llm, dummy_supabase_store, dummy_st_model)
     #    print(f"Successfully called get_all_tools. Number of tools returned: {len(all_tools)}")
     #    for tool in all_tools:
     #        print(f"Tool: {tool.name}, Description: {tool.description[:60]}...")

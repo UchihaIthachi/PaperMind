@@ -126,21 +126,27 @@ def add_texts_to_supabase_store(
     vector_store: SupabaseVectorStore | None,
     texts: list[str],
     metadatas: list[dict] | None = None
-):
+) -> tuple[bool, str]:
     if not vector_store:
-        print("WARNING: Supabase vector store not available. Skipping document addition.")
-        st.error("Long-term memory store (Supabase) not available. Cannot add documents.") # UI Feedback
-        return
+        message = "Supabase vector store not available. Skipping document addition."
+        print(f"WARNING: {message}")
+        # st.error("Long-term memory store (Supabase) not available. Cannot add documents.") # UI Feedback Removed
+        return False, message
     if not texts:
-        print("INFO: No texts provided to add to Supabase store.")
-        return
+        message = "No texts provided to add to Supabase store."
+        print(f"INFO: {message}")
+        return True, message # Considered a success as there's nothing to do
     try:
         vector_store.add_texts(texts=texts, metadatas=metadatas)
-        print(f"INFO: Successfully added {len(texts)} text chunks to Supabase.")
-        st.success(f"Successfully added {len(texts)} text chunks to long-term memory (Supabase)!") # UI Feedback
+        message = f"Successfully added {len(texts)} text chunks to Supabase."
+        print(f"INFO: {message}")
+        # st.success(f"Successfully added {len(texts)} text chunks to long-term memory (Supabase)!") # UI Feedback Removed
+        return True, message
     except Exception as e:
-        print(f"ERROR: Error adding documents to SupabaseVectorStore: {e}")
-        st.error(f"Error adding documents to long-term memory (Supabase): {e}") # UI Feedback
+        message = f"Error adding documents to SupabaseVectorStore: {e}"
+        print(f"ERROR: {message}")
+        # st.error(f"Error adding documents to long-term memory (Supabase): {e}") # UI Feedback Removed
+        return False, message
 
 def search_supabase_store(
     vector_store: SupabaseVectorStore | None,
@@ -168,17 +174,23 @@ def process_and_store_chunks_in_chroma(
     chunk_size: int = CHUNK_SIZE,
     chunk_overlap: int = CHUNK_OVERLAP,
     chunk_separators: list[str] | None = None # Allow None to use default in splitter
-) -> tuple[list[str], chromadb.Collection | None]:
+) -> tuple[list[str] | None, chromadb.Collection | None, bool, str]:
     """
-    Splits text, stores embeddings in a session-specific ChromaDB collection, and returns the text chunks.
+    Splits text, stores embeddings in a session-specific ChromaDB collection.
+    Returns:
+        - List of text chunks (or None on critical early failure)
+        - ChromaDB Collection object (or None on failure)
+        - Boolean success flag
+        - Message string
     Uses app_config defaults for collection name and chunking parameters.
     """
     if not all_text:
-        return [], None
+        return None, None, True, "No text provided to process for ChromaDB."
     if not chroma_client or not embedding_model_st:
-        print("ERROR: ChromaDB client or SentenceTransformer embedding model not provided to process_and_store_chunks_in_chroma.")
-        st.error("Session store components not ready. Cannot process PDFs for session.") # UI Feedback
-        return [], None
+        message = "ChromaDB client or SentenceTransformer embedding model not provided."
+        print(f"ERROR: {message} in process_and_store_chunks_in_chroma.")
+        # st.error("Session store components not ready. Cannot process PDFs for session.") # UI Feedback Removed
+        return None, None, False, f"{message}. Cannot process PDFs for session."
 
     actual_separators = chunk_separators if chunk_separators is not None else CHUNK_SEPARATORS
 
@@ -191,11 +203,12 @@ def process_and_store_chunks_in_chroma(
     chunks = text_splitter.split_text(all_text)
 
     if not chunks:
-        # st.warning("Text extraction yielded no processable chunks for ChromaDB.") # UI Feedback
-        print("INFO: Text extraction yielded no processable chunks for ChromaDB.")
-        return [], None
+        message = "Text extraction yielded no processable chunks for ChromaDB."
+        # st.warning(message) # UI Feedback Removed
+        print(f"INFO: {message}")
+        return [], None, True, message # Success, but no chunks to process
 
-    # st.info(f"Split text into {len(chunks)} chunks for session RAG (ChromaDB).") # UI Feedback
+    # st.info(f"Split text into {len(chunks)} chunks for session RAG (ChromaDB).") # UI Feedback Removed
     print(f"INFO: Split text into {len(chunks)} chunks for ChromaDB collection '{collection_name}'.")
 
     try:
@@ -227,12 +240,14 @@ def process_and_store_chunks_in_chroma(
             )
         # The collection object is stored in st.session_state by the calling code in app_logic or streamlit_app.py
         # e.g., st.session_state[collection_name] = collection
-        print(f"INFO: Stored {len(chunks)} chunks in session ChromaDB collection: {valid_collection_name}")
-        return chunks, collection
+        message = f"Stored {len(chunks)} chunks in session ChromaDB collection: {valid_collection_name}"
+        print(f"INFO: {message}")
+        return chunks, collection, True, message
     except Exception as e:
-        # st.error(f"Error processing text for session ChromaDB: {e}") # UI Feedback
-        print(f"ERROR: Error processing text for ChromaDB session store: {e}")
-        return chunks, None # Return chunks even if DB fails, so Supabase can still try
+        message = f"Error processing text for ChromaDB session store: {e}"
+        # st.error(message) # UI Feedback Removed
+        print(f"ERROR: {message}")
+        return chunks, None, False, message # Return chunks even if DB fails, so Supabase can still try
 
 def semantic_search_chroma(
     query: str,
@@ -248,7 +263,7 @@ def semantic_search_chroma(
         return {} # Return empty dict for consistency with ChromaDB's possible empty result
     if not embedding_model_st:
         print("ERROR: SentenceTransformer embedding model not provided for semantic_search_chroma.")
-        # st.error("Embedding model not available for session search.") # UI Feedback
+        # st.error("Embedding model not available for session search.") # UI Feedback Removed
         return {}
 
     try:

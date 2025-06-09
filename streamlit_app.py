@@ -155,18 +155,20 @@ def main():
             # 5. Populate session RAG (ChromaDB)
             if all_chunks_for_session_rag and st.session_state.chromadb_client and st.session_state.embedding_model_st:
                 with st.spinner("Updating session RAG store (ChromaDB)..."):
-                    # Pass the initialized chromadb_client and embedding_model_st
-                    _, session_collection = process_and_store_chunks_in_chroma(
+                    processed_chunks, session_collection, success, message = process_and_store_chunks_in_chroma(
                         "\n\n".join(all_chunks_for_session_rag),
                         chroma_client=st.session_state.chromadb_client,
                         embedding_model_st=st.session_state.embedding_model_st,
                         collection_name=CHROMA_SESSION_COLLECTION_NAME
                     )
-                    if session_collection:
+                    if success and session_collection:
                         st.session_state.pdf_session_collection = session_collection
-                        st.success(f"✅ Session RAG store updated with {len(all_chunks_for_session_rag)} total chunks.")
-                    else:
-                        st.warning("⚠️ Could not initialize/update session PDF store (ChromaDB).")
+                        # Use the message from the function, which details chunk count
+                        st.success(f"✅ Session RAG store updated: {message}")
+                    elif success and not session_collection and processed_chunks is not None : # Success but no collection (e.g. no chunks, or no text provided)
+                        st.info(f"Session RAG store: {message}")
+                    else: # Failure
+                        st.warning(f"⚠️ Could not initialize/update session PDF store (ChromaDB): {message}")
             elif not all_chunks_for_session_rag and uploaded_files:
                  st.info("No text chunks available from uploaded files to update session RAG store.")
 
@@ -174,11 +176,15 @@ def main():
             # 6. Add all collected chunks and their specific metadatas to Supabase
             if st.session_state.supabase_vector_store and all_processed_chunks_for_supabase:
                 with st.spinner(f"Adding {len(all_processed_chunks_for_supabase)} total PDF chunks to long-term memory (Supabase)..."):
-                    add_texts_to_supabase_store( # Renamed function in vector_store_manager
+                    success, message = add_texts_to_supabase_store(
                         st.session_state.supabase_vector_store,
                         texts=all_processed_chunks_for_supabase,
                         metadatas=all_metadatas_for_supabase
                     )
+                    if success:
+                        st.success(f"✅ {message}")
+                    else:
+                        st.error(f"❌ Failed to add to Supabase: {message}")
             elif not all_processed_chunks_for_supabase and uploaded_files:
                  st.info("No processable text chunks from PDFs to add to long-term memory (Supabase).")
             elif uploaded_files and not st.session_state.supabase_vector_store:
