@@ -1,8 +1,11 @@
 # src/config/app_config.py
 import os
+import logging
 from dotenv import load_dotenv
 
 load_dotenv() # Load .env file at the top
+
+logger = logging.getLogger(__name__)
 
 # --- Environment Variables (loaded from .env file) ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -82,16 +85,17 @@ LOG_LEVEL = "INFO"  # Default log level (e.g., DEBUG, INFO, WARNING, ERROR)
 
 # Print a message if run directly, to confirm it's accessible
 if __name__ == '__main__':
-    print("app_config.py loaded. Constants are:")
-    print(f"  GEMINI_LLM_MODEL_NAME: {GEMINI_LLM_MODEL_NAME}")
-    print(f"  EMBEDDING_MODEL_NAME: {EMBEDDING_MODEL_NAME}")
-    print(f"  RETRIEVAL_INITIAL_TOP_K: {RETRIEVAL_INITIAL_TOP_K}")
-    print(f"  QUERY_EXPANSION_NUM_QUERIES: {QUERY_EXPANSION_NUM_QUERIES}")
-    print(f"  RERANKING_TOP_N_SELECT: {RERANKING_TOP_N_SELECT}")
-    print(f"  CHROMA_SESSION_COLLECTION_NAME: {CHROMA_SESSION_COLLECTION_NAME}")
-    print(f"  CHUNK_SIZE: {CHUNK_SIZE}")
-    print(f"  TOOL_CONTEXT_MAX_CHARS_FOR_SUMMARIZATION: {TOOL_CONTEXT_MAX_CHARS_FOR_SUMMARIZATION}")
-    print(f"  SUMMARIZER_MAX_INPUT_CHARS: {SUMMARIZER_MAX_INPUT_CHARS}")
-    print(f"  LANGFUSE_PUBLIC_KEY: {'*' * 5 if LANGFUSE_PUBLIC_KEY else 'Not set'}") # Avoid printing actual keys
-    print(f"  LANGFUSE_SECRET_KEY: {'*' * 5 if LANGFUSE_SECRET_KEY else 'Not set'}")
-    print(f"  LANGFUSE_HOST: {LANGFUSE_HOST}")
+    logging.basicConfig(level=LOG_LEVEL) # Configure basic logging for direct script run
+    logger.info("app_config.py loaded. Constants are:")
+    logger.info(f"  GEMINI_LLM_MODEL_NAME: {GEMINI_LLM_MODEL_NAME}")
+    logger.info(f"  EMBEDDING_MODEL_NAME: {EMBEDDING_MODEL_NAME}")
+    logger.info(f"  RETRIEVAL_INITIAL_TOP_K: {RETRIEVAL_INITIAL_TOP_K}")
+    logger.info(f"  QUERY_EXPANSION_NUM_QUERIES: {QUERY_EXPANSION_NUM_QUERIES}")
+    logger.info(f"  RERANKING_TOP_N_SELECT: {RERANKING_TOP_N_SELECT}")
+    logger.info(f"  CHROMA_SESSION_COLLECTION_NAME: {CHROMA_SESSION_COLLECTION_NAME}")
+    logger.info(f"  CHUNK_SIZE: {CHUNK_SIZE}")
+    logger.info(f"  TOOL_CONTEXT_MAX_CHARS_FOR_SUMMARIZATION: {TOOL_CONTEXT_MAX_CHARS_FOR_SUMMARIZATION}")
+    logger.info(f"  SUMMARIZER_MAX_INPUT_CHARS: {SUMMARIZER_MAX_INPUT_CHARS}")
+    logger.info(f"  LANGFUSE_PUBLIC_KEY: {'*' * 5 if LANGFUSE_PUBLIC_KEY else 'Not set'}") # Avoid printing actual keys
+    logger.info(f"  LANGFUSE_SECRET_KEY: {'*' * 5 if LANGFUSE_SECRET_KEY else 'Not set'}")
+    logger.info(f"  LANGFUSE_HOST: {LANGFUSE_HOST}")

@@ -7,6 +7,7 @@ from langchain_core.language_models.chat_models import BaseChatModel # For llm t
 
 from langfuse import Langfuse # Added for custom span creation
 import json # For serializing complex objects for metadata
+import logging # Added for logging
 
 # Attempt to import from the new structure
 try:
@@ -26,7 +27,7 @@ except ImportError: # Fallback for local testing if src is not in PYTHONPATH
     # RERANKING_TOP_N_SELECT and QUERY_EXPANSION_NUM_QUERIES are used by functions in retrieval_utils directly
 except ImportError: # Fallback for local testing if src is not in PYTHONPATH
     # This block is for when running tool_definitions.py directly and src.config is not in path
-    print("WARN: tool_definitions.py running with fallback imports/configs for direct testing.")
+    logger.warning("tool_definitions.py running with fallback imports/configs for direct testing.")
     from utils.retrieval_utils import expand_query, rerank_documents
     from db_managers.vector_store_manager import semantic_search_chroma, search_supabase_store
     RETRIEVAL_INITIAL_TOP_K = 5
@@ -35,6 +36,7 @@ except ImportError: # Fallback for local testing if src is not in PYTHONPATH
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY") # Need os import for this fallback
     if TAVILY_API_KEY is None: import os # Ensure os is imported if TAVILY_API_KEY is None then used
 
+logger = logging.getLogger(__name__)
 
 # Initialize Arxiv Tool globally within this module as it's stateless
 # In app.py, this was: arxiv_tool = ArxivQueryRun()
@@ -58,14 +60,14 @@ def query_uploaded_pdfs_func(original_query: str, llm: BaseChatModel, st_objects
             try:
                 span.update(**kwargs)
             except Exception as e:
-                print(f"Langfuse: Error updating span: {e}")
+                logger.error(f"Langfuse: Error updating span: {e}")
 
     def try_end_span(span, **kwargs):
         if span:
             try:
                 span.end(**kwargs)
             except Exception as e:
-                print(f"Langfuse: Error ending span: {e}")
+                logger.error(f"Langfuse: Error ending span: {e}")
 
     pdf_collection = getattr(session_state, 'pdf_session_collection', None)
     if pdf_collection is None:
@@ -80,7 +82,7 @@ def query_uploaded_pdfs_func(original_query: str, llm: BaseChatModel, st_objects
         expanded_queries = expand_query(original_query, llm, num_expansions=2)
         try_end_span(pdf_query_expansion_span, output={'expanded_queries': expanded_queries, 'count': len(expanded_queries)})
     except Exception as e:
-        print(f"Error during PDF query expansion: {e}")
+        logger.error(f"Error during PDF query expansion: {e}")
         try_end_span(pdf_query_expansion_span, level='ERROR', status_message=str(e), output={'expanded_queries': [], 'count': 0})
         # Decide if to proceed with original query or return error
         expanded_queries = [original_query] # Fallback to original query
@@ -101,7 +103,7 @@ def query_uploaded_pdfs_func(original_query: str, llm: BaseChatModel, st_objects
             if 'embedding_model_st' in st_objects and pdf_collection:
                 results = semantic_search_chroma(exp_query, pdf_collection, st_objects['embedding_model_st'], top_k=RETRIEVAL_INITIAL_TOP_K)
             else:
-                print("ERROR: embedding_model_st not found in st_objects for query_uploaded_pdfs_func")
+                logger.error("embedding_model_st not found in st_objects for query_uploaded_pdfs_func")
                 # This error should ideally be caught by the main try-except or handled differently
                 # For now, if it occurs, it might bypass span ending.
                 return "Error: Session PDF search is not properly configured (missing embedding model)."
@@ -120,7 +122,7 @@ def query_uploaded_pdfs_func(original_query: str, llm: BaseChatModel, st_objects
 
         try_end_span(initial_search_span, output={'total_unique_docs_retrieved': len(all_retrieved_doc_texts)})
     except Exception as e:
-        print(f"Error during ChromaDB search: {e}")
+        logger.error(f"Error during ChromaDB search: {e}")
         try_end_span(initial_search_span, level='ERROR', status_message=str(e))
         # Potentially return error or empty results if search fails critically
         if not all_retrieved_doc_texts: # If search failed before retrieving anything
@@ -142,7 +144,7 @@ def query_uploaded_pdfs_func(original_query: str, llm: BaseChatModel, st_objects
         try_end_span(pdf_reranking_span, output={'reranked_doc_count': len(reranked_lc_documents),
                                                  'reranked_docs_preview': [d.page_content[:100]+"..." for d in reranked_lc_documents]})
     except Exception as e:
-        print(f"Error during PDF reranking: {e}")
+        logger.error(f"Error during PDF reranking: {e}")
         try_end_span(pdf_reranking_span, level='ERROR', status_message=str(e))
         # Fallback: use non-reranked documents if reranking fails? Or return error.
         # For now, if reranking fails, it might proceed with empty reranked_lc_documents. This needs careful thought.
@@ -166,7 +168,7 @@ def query_uploaded_pdfs_func(original_query: str, llm: BaseChatModel, st_objects
         try_end_span(final_llm_span, output={'response_length': len(result_content), 'response_preview': result_content[:100]+"..."})
         return result_content
     except Exception as e:
-        print(f"LLM error in query_uploaded_pdfs_func synthesis: {e}")
+        logger.error(f"LLM error in query_uploaded_pdfs_func synthesis: {e}")
         try_end_span(final_llm_span, level='ERROR', status_message=str(e))
         return f"Error generating response from re-ranked session PDF context: {str(e)}"
 
@@ -176,7 +178,7 @@ def search_arxiv_papers_func(query: str, arxiv_tool_instance: ArxivQueryRun) -> 
     try:
         return arxiv_tool_instance.invoke(query)
     except Exception as e:
-        print(f"Error in search_arxiv_papers_func: {e}")
+        logger.error(f"Error in search_arxiv_papers_func: {e}")
         return f"Error searching ArXiv: {str(e)}"
 
 # Long-Term Memory (Supabase) Tool
@@ -195,14 +197,14 @@ def query_long_term_memory_func(original_query: str, llm: BaseChatModel, vector_
             try:
                 span.update(**kwargs)
             except Exception as e:
-                print(f"Langfuse: Error updating span: {e}")
+                logger.error(f"Langfuse: Error updating span: {e}")
 
     def try_end_span(span, **kwargs):
         if span:
             try:
                 span.end(**kwargs)
             except Exception as e:
-                print(f"Langfuse: Error ending span: {e}")
+                logger.error(f"Langfuse: Error ending span: {e}")
 
     if vector_store is None:
         return "Long-term memory (Supabase) is not available or configured."
@@ -216,7 +218,7 @@ def query_long_term_memory_func(original_query: str, llm: BaseChatModel, vector_
         expanded_queries = expand_query(original_query, llm, num_expansions=2)
         try_end_span(ltm_query_expansion_span, output={'expanded_queries': expanded_queries, 'count': len(expanded_queries)})
     except Exception as e:
-        print(f"Error during LTM query expansion: {e}")
+        logger.error(f"Error during LTM query expansion: {e}")
         try_end_span(ltm_query_expansion_span, level='ERROR', status_message=str(e), output={'expanded_queries': [], 'count': 0})
         expanded_queries = [original_query] # Fallback
 
@@ -246,7 +248,7 @@ def query_long_term_memory_func(original_query: str, llm: BaseChatModel, vector_
                                                           'retrieved_docs_preview': docs_preview_for_query})
         try_end_span(initial_search_span_ltm, output={'total_unique_docs_retrieved': len(all_retrieved_docs)})
     except Exception as e:
-        print(f"Error during Supabase search: {e}")
+        logger.error(f"Error during Supabase search: {e}")
         try_end_span(initial_search_span_ltm, level='ERROR', status_message=str(e))
         if not all_retrieved_docs:
             return f"Error searching long-term memory: {str(e)}"
@@ -266,7 +268,7 @@ def query_long_term_memory_func(original_query: str, llm: BaseChatModel, vector_
         try_end_span(ltm_reranking_span, output={'reranked_doc_count': len(reranked_ltm_documents),
                                                  'reranked_docs_preview': [d.page_content[:100]+"..." for d in reranked_ltm_documents]})
     except Exception as e:
-        print(f"Error during LTM reranking: {e}")
+        logger.error(f"Error during LTM reranking: {e}")
         try_end_span(ltm_reranking_span, level='ERROR', status_message=str(e))
         if not reranked_ltm_documents:
              return f"Error reranking LTM documents: {str(e)}"
@@ -287,7 +289,7 @@ def query_long_term_memory_func(original_query: str, llm: BaseChatModel, vector_
         try_end_span(final_llm_span_ltm, output={'response_length': len(result_content), 'response_preview': result_content[:100]+"..."})
         return result_content
     except Exception as e:
-        print(f"LLM error in query_long_term_memory_func synthesis: {e}")
+        logger.error(f"LLM error in query_long_term_memory_func synthesis: {e}")
         try_end_span(final_llm_span_ltm, level='ERROR', status_message=str(e))
         return f"Error generating response from re-ranked long-term memory context: {str(e)}"
 
@@ -310,10 +312,10 @@ def get_all_tools(
     # This helps in decoupling tool logic from direct Streamlit calls, making them more testable.
     # In a more advanced setup, logging or a dedicated feedback mechanism might be used.
     streamlit_feedback_objects = {
-        'info': st.info if 'st' in globals() else print,
-        'write': st.write if 'st' in globals() else print,
+        'info': st.info if 'st' in globals() else logger.info, # Use logger for non-streamlit fallback
+        'write': st.write if 'st' in globals() else logger.info, # Use logger for non-streamlit fallback
         'spinner': st.spinner if 'st' in globals() else lambda x: type('dummy_spinner', (object,), {'__enter__': lambda: None, '__exit__': lambda *a: None})(),
-        'error': st.error if 'st' in globals() else print,
+        'error': st.error if 'st' in globals() else logger.error, # Use logger for non-streamlit fallback
         'embedding_model_st': st_embedding_model, # Crucial for session PDF tool
         'session_state': st.session_state if 'st' in globals() else None # Provide access to session_state
     }
@@ -352,7 +354,7 @@ def get_all_tools(
         tools.append(tavily_search_tool)
     else:
         # UI warning about Tavily key missing is handled in streamlit_app.py's sidebar
-        print("INFO: TAVILY_API_KEY not found (via app_config). Web search tool will not be added.")
+        logger.info("TAVILY_API_KEY not found (via app_config). Web search tool will not be added.")
 
 
     # Long-Term Memory (Supabase) Tool
@@ -362,20 +364,21 @@ def get_all_tools(
             func=lambda query_str: query_long_term_memory_func(query_str, llm, supabase_vector_store, streamlit_feedback_objects),
             description="Searches and retrieves information from the persistent long-term knowledge base (Supabase). Use this for queries about previously processed documents or general knowledge accumulated over time. Not for current session PDFs unless they have been explicitly stored here."
         ))
-        print("INFO: Long-term memory tool (QueryLongTermMemory) added to agent.")
+        logger.info("Long-term memory tool (QueryLongTermMemory) added to agent.")
     # else:
     #     # UI warning about Supabase missing is handled in streamlit_app.py's sidebar
-    #     print("INFO: Long-term memory tool (QueryLongTermMemory) not added as Supabase vector store is not available.")
+    #     logger.info("Long-term memory tool (QueryLongTermMemory) not added as Supabase vector store is not available.")
 
     return tools
 
 if __name__ == '__main__':
-    print("Testing tool_definitions.py...")
+    logging.basicConfig(level=logging.INFO) # Basic config for testing
+    logger.info("Testing tool_definitions.py...")
     # This file is not meant to be run directly without a proper context
     # (LLM, vector stores, Streamlit session state etc.)
     # Basic check:
     # if callable(get_all_tools):
-    #    print("get_all_tools function is defined.")
+    #    logger.info("get_all_tools function is defined.")
     #    # Dummy objects for testing the structure of get_all_tools
     #    class DummyLLM(BaseChatModel):
     #        def _generate(self, messages, stop=None, run_manager=None, **kwargs): pass
@@ -394,7 +397,7 @@ if __name__ == '__main__':
 
     #    # Adjusted call for testing as pdf_session_collection is removed from direct args
     #    all_tools = get_all_tools(dummy_llm, dummy_supabase_store, dummy_st_model)
-    #    print(f"Successfully called get_all_tools. Number of tools returned: {len(all_tools)}")
+    #    logger.info(f"Successfully called get_all_tools. Number of tools returned: {len(all_tools)}")
     #    for tool in all_tools:
-    #        print(f"Tool: {tool.name}, Description: {tool.description[:60]}...")
-    print("tool_definitions.py test finished (conceptual).")
+    #        logger.info(f"Tool: {tool.name}, Description: {tool.description[:60]}...")
+    logger.info("tool_definitions.py test finished (conceptual).")

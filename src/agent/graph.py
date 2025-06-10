@@ -29,16 +29,26 @@ class AgentState(TypedDict):
     current_tool_retries: int = 0
     last_tool_error: Optional[str] = None
 
+# Module-level counter for iterations within a single graph invocation.
+# Reset each time create_agent_graph is called.
 _iteration_count_local = 0
 
 def create_agent_graph(llm: BaseChatModel, tools_list: List):
     global _iteration_count_local
-    _iteration_count_local = 0
+    _iteration_count_local = 0 # Reset counter for new graph creation
 
     llm_with_tools = llm.bind_tools(tools_list)
 
+    # Construct tools_description string
+    if tools_list:
+        tools_description = "\n".join(
+            [f"- {tool.name}: {tool.description}" for tool in tools_list]
+        )
+    else:
+        tools_description = "No tools available."
+
     agent_prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT_LANGGRAPH.format(tools_description="")),
+        ("system", SYSTEM_PROMPT_LANGGRAPH.format(tools_description=tools_description)),
         MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{input}"),
     ])
@@ -121,27 +131,59 @@ def create_agent_graph(llm: BaseChatModel, tools_list: List):
 
     def tool_node_logic(state: AgentState):
         logger.info("--- TOOL NODE ---")
+
+        current_tool_action_from_state = state.get("current_tool_action") # Action decided by agent, or action that previously failed.
+        current_retries = state.get("current_tool_retries", 0) # Number of retries already attempted for current_tool_action_from_state.
+        last_tool_error = state.get("last_tool_error") # Error from the *very last* tool execution attempt.
+
         action_to_execute: Optional[AgentAction] = None
 
-        # Determine if this is a retry for current_tool_action
-        is_retry_attempt = state.get("current_tool_action") is not None and state.get("current_tool_retries", 0) > 0
+        # Scenario 1: Retry a previously failed action.
+        # This is identified if last_tool_error is set, current_tool_action_from_state is the action that failed,
+        # and current_retries (which was incremented upon that failure) is > 0.
+        # route_after_tools would have routed back to "tools" if retries < MAX_TOOL_RETRIES.
+        if last_tool_error and current_tool_action_from_state and current_retries > 0:
+            action_to_execute = current_tool_action_from_state
+            # current_retries is the number of *previous* failed attempts.
+            # So, this is retry attempt number `current_retries`.
+            logger.info(f"Retrying tool: {action_to_execute.tool} (This is retry attempt {current_retries} of {MAX_TOOL_RETRIES})")
 
-        if is_retry_attempt:
-            action_to_execute = state["current_tool_action"]
-            logger.info(f"Retrying tool: {action_to_execute.tool}, Attempt: {state['current_tool_retries']}")
-        elif isinstance(state.get("agent_outcome"), list) and state.get("agent_outcome"):
-            action_to_execute = state["agent_outcome"][0]
-            logger.info(f"Attempting tool (first time): {action_to_execute.tool} with input: {action_to_execute.tool_input}")
-        elif isinstance(state.get("agent_outcome"), AgentAction): # Should be list based on agent_node
-             action_to_execute = state["agent_outcome"]
-             logger.info(f"Attempting tool (single action from outcome): {action_to_execute.tool} with input: {action_to_execute.tool_input}")
+        # Scenario 2: Execute a new action selected by the agent.
+        # This is identified if there's no last_tool_error (meaning the previous action, if any, was not an error in this node),
+        # and current_tool_action_from_state is set (by agent_node_logic).
+        # current_retries would be 0 if set by agent_node_logic for a new action.
+        elif not last_tool_error and current_tool_action_from_state:
+            action_to_execute = current_tool_action_from_state
+            # Ensure current_retries is 0 for a fresh attempt, though agent_node should have set this.
+            if current_retries != 0:
+                logger.warning(f"Expected current_retries to be 0 for a new tool action, but found {current_retries}. Proceeding with action: {action_to_execute.tool}")
+            logger.info(f"Attempting tool (selected by agent): {action_to_execute.tool} with input: {action_to_execute.tool_input}")
 
+        # If action_to_execute is still None, it means there's a logic issue or unexpected state.
         if not action_to_execute:
-            error_msg = "Tool node: No valid action to execute."
-            logger.error(error_msg + f" State: {state}")
-            return {"last_tool_error": error_msg, "retrieved_tool_context": None,
-                    "chat_history": [ToolMessage(content=error_msg, name="system_error", tool_call_id="N/A")]}
+            # This can happen if agent_outcome was AgentFinish but was routed here,
+            # or if current_tool_action was not set by agent_node when it should have.
+            agent_outcome_val = state.get('agent_outcome')
+            error_msg = (f"Tool node: No valid action to execute. "
+                         f"current_tool_action: {current_tool_action_from_state.tool if current_tool_action_from_state else 'None'}, "
+                         f"last_tool_error: {'present' if last_tool_error else 'None'}, "
+                         f"current_retries: {current_retries}, "
+                         f"agent_outcome type: {type(agent_outcome_val).__name__}.")
+            logger.error(error_msg + f" Full agent_outcome: {agent_outcome_val}")
+            logger.error(error_msg) # Log the detailed error message
+            # The original more generic error_msg for the user-facing message:
+            user_facing_error_msg = "Tool node: No valid action to execute. This indicates a potential routing or state issue in the graph."
+            return {
+                "last_tool_error": user_facing_error_msg, # Keep it concise for state
+                "retrieved_tool_context": None,
+                "agent_outcome": AgentFinish(return_values={"output": f"System error: {user_facing_error_msg}. Cannot proceed."}, log=error_msg), # Log detailed error
+                "chat_history": [AIMessage(content=f"A system error occurred: {user_facing_error_msg}. Unable to proceed with tool execution.")]
+            }
         try:
+            # On successful execution, current_tool_action and current_tool_retries from input state are no longer relevant
+            # for the *next* agent step, so they are not explicitly cleared from state here.
+            # The agent_node_logic will reset them if it decides on a *new* action.
+            # If this tool call fails, they will be updated with new failure info.
             output = tool_executor.invoke(action_to_execute)
             logger.info(f"Tool {action_to_execute.tool} executed successfully. Output (truncated): {str(output)[:200]}")
             tool_message = ToolMessage(
@@ -229,7 +271,7 @@ def create_agent_graph(llm: BaseChatModel, tools_list: List):
 
     workflow = StateGraph(AgentState)
     workflow.add_node("agent", agent_node_logic)
-    workflow.add_node("tools", functools.partial(tool_node_logic, tool_executor_instance=tool_executor))
+    workflow.add_node("tools", tool_node_logic) # tool_executor is in closure
     workflow.add_node("summarizer", bound_call_summarizer_node)
     workflow.set_entry_point("agent")
     workflow.add_conditional_edges("agent", route_after_agent, { "tools": "tools", END: END })

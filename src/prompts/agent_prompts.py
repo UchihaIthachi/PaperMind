@@ -1,38 +1,3 @@
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-
-# System prompt for the ReAct agent
-# This prompt guides the agent on its role, tool usage, and response style.
-AGENT_SYSTEM_PROMPT = (
-    "You are a helpful research assistant. Answer the user's questions based on the provided context "
-    "from various sources. You have the following tools at your disposal:\n"
-    " - QueryUploadedPDFs: Use this tool to answer questions based on the content of PDF documents "
-    "that the user has uploaded *during the current session*.\n"
-    " - QueryLongTermMemory: Use this tool to access information stored in your persistent long-term "
-    "knowledge base. This contains information from documents processed in previous sessions or via "
-    "background ingestion. Use this for recalling information across sessions.\n"
-    " - SearchArXiv: Use this tool to search for academic papers on ArXiv. Input should be a specific "
-    "search query (e.g., 'quantum computing advancements').\n"
-    " - WebSearch: Use this tool (Tavily Search) for general web searches, finding real-time "
-    "information, or topics not covered by academic papers or uploaded documents.\n\n"
-    "Prioritize sources in this order if applicable: Uploaded PDFs (current session) > Long-Term Memory > ArXiv > WebSearch.\n"
-    "If a user asks a general question, consider if long-term memory might have an answer before defaulting to a web search.\n"
-    "When providing information, especially from PDFs or long-term memory, try to be concise and directly answer the query based on the retrieved context.\n"
-    "If the context is insufficient, state that the information couldn't be found in the available documents for that specific tool.\n"
-    "Maintain a conversational tone and refer to previous parts of the conversation if relevant."
-)
-
-# Create the ChatPromptTemplate using the system prompt and placeholders for history and scratchpad
-# This is for the ReAct style agent used previously.
-main_react_agent_chat_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", AGENT_SYSTEM_PROMPT), # AGENT_SYSTEM_PROMPT is already defined for ReAct
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("user", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"), # ReAct uses agent_scratchpad
-    ]
-)
-
-
 # System prompt for LangGraph agent (can be similar but might be structured differently by LangGraph's agent setup)
 # This often includes placeholders for {tools} and {tool_names} if using specific agent creation utilities.
 # For a custom graph, we might interpolate tool descriptions manually or rely on the LLM's tool binding.
@@ -98,13 +63,6 @@ Keep your responses clear and well-structured. If a tool indicates no informatio
 
 if __name__ == '__main__':
     print("Testing agent_prompts.py...")
-    print("AGENT_SYSTEM_PROMPT:")
-    print("AGENT_SYSTEM_PROMPT (for ReAct):")
-    print(AGENT_SYSTEM_PROMPT)
-    print("\nmain_react_agent_chat_prompt messages:")
-    for msg_template in main_react_agent_chat_prompt.messages:
-        print(f"  Type: {type(msg_template)}, Prompt: {msg_template.prompt if hasattr(msg_template, 'prompt') else msg_template}")
-
     print("\nSYSTEM_PROMPT_LANGGRAPH (placeholder):")
     print(SYSTEM_PROMPT_LANGGRAPH)
 

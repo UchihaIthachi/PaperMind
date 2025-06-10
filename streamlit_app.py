@@ -94,7 +94,6 @@ def main():
             # after initialize_session_state()
             tools = get_all_tools(
                 llm=st.session_state.llm,
-                pdf_session_collection=st.session_state.get("pdf_session_collection"), # Will be None initially
                 supabase_vector_store=st.session_state.get("supabase_vector_store"),
                 # tavily_api_key is now handled internally by get_all_tools using imported config
                 st_embedding_model=st.session_state.get("embedding_model_st")

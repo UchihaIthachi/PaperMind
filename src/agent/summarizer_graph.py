@@ -1,11 +1,14 @@
 from typing import TypedDict, Optional, List, Dict, Any
 from langchain_core.documents import Document
-from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage # For LLM interaction
+from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage # For LLM interaction
 from langchain_core.language_models.chat_models import BaseChatModel # For type hinting llm
 from langgraph.graph import StateGraph, END
 import functools # For using partial to pass llm to node
+import logging
 
 from src.config.app_config import SUMMARIZER_MAX_INPUT_CHARS
+
+logger = logging.getLogger(__name__)
 
 # Define Summarizer State
 class SummarizerState(TypedDict):
@@ -23,7 +26,7 @@ def summarize_node(state: SummarizerState, llm: BaseChatModel) -> Dict[str, Any]
     """
     Performs summarization based on the input documents or context string.
     """
-    print("--- SUMMARIZER NODE ---")
+    logger.info("--- SUMMARIZER NODE ---")
     documents = state.get("documents_to_summarize")
     context_str = state.get("context_string_to_summarize")
     query = state.get("original_query")
@@ -31,16 +34,16 @@ def summarize_node(state: SummarizerState, llm: BaseChatModel) -> Dict[str, Any]
 
     if documents:
         text_to_summarize = "\n\n---\n\n".join([doc.page_content for doc in documents])
-        print(f"Summarizing {len(documents)} documents.")
+        logger.info(f"Summarizing {len(documents)} documents.")
     elif context_str:
         text_to_summarize = context_str
-        print("Summarizing provided context string.")
+        logger.info("Summarizing provided context string.")
     else:
-        print("ERROR: No content provided for summarization in summarizer_node.")
+        logger.error("No content provided for summarization in summarizer_node.")
         return {"summary": "", "error": "No content provided for summarization."}
 
     if not text_to_summarize.strip():
-        print("ERROR: Content provided for summarization is empty in summarizer_node.")
+        logger.error("Content provided for summarization is empty in summarizer_node.")
         return {"summary": "", "error": "Content provided for summarization is empty."}
 
     # Constructing messages for the chat model
@@ -54,19 +57,19 @@ def summarize_node(state: SummarizerState, llm: BaseChatModel) -> Dict[str, Any]
     # This is a simple truncation; more sophisticated methods might be needed for very long texts.
     # max_summary_input_length = 10000 # Example character limit for text to summarize
     if len(text_to_summarize) > SUMMARIZER_MAX_INPUT_CHARS:
-        print(f"WARN: Text to summarize exceeds {SUMMARIZER_MAX_INPUT_CHARS} chars. Truncating.")
+        logger.warning(f"Text to summarize exceeds {SUMMARIZER_MAX_INPUT_CHARS} chars. Truncating.")
         text_to_summarize = text_to_summarize[:SUMMARIZER_MAX_INPUT_CHARS] + "..."
 
     messages.append(HumanMessage(content=f"Please summarize the following text:\n\n---\n{text_to_summarize}\n---"))
 
     try:
-        print(f"Invoking LLM for summarization (query-aware: {bool(query)}).")
+        logger.info(f"Invoking LLM for summarization (query-aware: {bool(query)}).")
         response = llm.invoke(messages)
         summary = response.content if hasattr(response, 'content') else str(response)
-        print(f"Summarization successful. Summary length: {len(summary)}")
+        logger.info(f"Summarization successful. Summary length: {len(summary)}")
         return {"summary": summary.strip(), "error": None}
     except Exception as e:
-        print(f"ERROR: Error during summarization LLM call: {e}")
+        logger.error(f"Error during summarization LLM call: {e}")
         return {"summary": "", "error": str(e)}
 
 # Create create_summarizer_graph function
@@ -89,16 +92,17 @@ def create_summarizer_graph(llm: BaseChatModel):
     workflow.set_entry_point("summarize")
     workflow.add_edge("summarize", END) # Simple linear graph: summarize then end
 
-    print("INFO: Summarizer graph created.")
+    logger.info("Summarizer graph created.")
     return workflow.compile()
 
 if __name__ == '__main__':
-    print("Testing summarizer_graph.py structure...")
+    logging.basicConfig(level=logging.INFO) # Basic config for testing
+    logger.info("Testing summarizer_graph.py structure...")
 
     # Mock LLM for structural testing
     class MockSummarizerLLM(BaseChatModel):
         def invoke(self, messages: List[BaseMessage], **kwargs) -> BaseMessage:
-            print(f"MockSummarizerLLM invoked with {len(messages)} messages.")
+            logger.info(f"MockSummarizerLLM invoked with {len(messages)} messages.")
             # Simulate summary generation
             text_to_summarize_content = ""
             original_query_content = ""
@@ -111,6 +115,7 @@ if __name__ == '__main__':
             summary_text = f"Mock summary of: '{text_to_summarize_content[:50]}...'"
             if original_query_content:
                 summary_text += f" (Relevant to query: {original_query_content})"
+            # Ensure AIMessage is imported or defined. For this example, assuming it's imported.
             return AIMessage(content=summary_text)
 
         def _generate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None, **kwargs) -> Any: pass
@@ -120,7 +125,7 @@ if __name__ == '__main__':
 
     mock_llm = MockSummarizerLLM()
     summarizer_app = create_summarizer_graph(mock_llm)
-    print("Summarizer graph compiled with Mock LLM.")
+    logger.info("Summarizer graph compiled with Mock LLM.")
 
     # Test case 1: Summarize documents
     docs_to_summarize = [
@@ -134,7 +139,7 @@ if __name__ == '__main__':
         summary="", error=None
     )
     result_docs = summarizer_app.invoke(input_state_docs)
-    print(f"\nTest 1 (Documents) Result: Summary='{result_docs.get('summary')}', Error='{result_docs.get('error')}'")
+    logger.info(f"\nTest 1 (Documents) Result: Summary='{result_docs.get('summary')}', Error='{result_docs.get('error')}'")
 
     # Test case 2: Summarize context string
     string_to_summarize = "LangGraph allows for cycles, making it suitable for agent-like behaviors where the LLM calls tools and then reasons about the tool outputs in a loop."
@@ -145,7 +150,7 @@ if __name__ == '__main__':
         summary="", error=None
     )
     result_string = summarizer_app.invoke(input_state_string)
-    print(f"\nTest 2 (String) Result: Summary='{result_string.get('summary')}', Error='{result_string.get('error')}'")
+    logger.info(f"\nTest 2 (String) Result: Summary='{result_string.get('summary')}', Error='{result_string.get('error')}'")
 
     # Test case 3: No input
     input_state_none = SummarizerState(
@@ -155,7 +160,7 @@ if __name__ == '__main__':
         summary="", error=None
     )
     result_none = summarizer_app.invoke(input_state_none)
-    print(f"\nTest 3 (No Input) Result: Summary='{result_none.get('summary')}', Error='{result_none.get('error')}'")
+    logger.info(f"\nTest 3 (No Input) Result: Summary='{result_none.get('summary')}', Error='{result_none.get('error')}'")
 
     # Test case 4: Empty string input
     input_state_empty_str = SummarizerState(
@@ -165,6 +170,6 @@ if __name__ == '__main__':
         summary="", error=None
     )
     result_empty_str = summarizer_app.invoke(input_state_empty_str)
-    print(f"\nTest 4 (Empty String) Result: Summary='{result_empty_str.get('summary')}', Error='{result_empty_str.get('error')}'")
+    logger.info(f"\nTest 4 (Empty String) Result: Summary='{result_empty_str.get('summary')}', Error='{result_empty_str.get('error')}'")
 
-    print("\nsummarizer_graph.py test finished.")
+    logger.info("\nsummarizer_graph.py test finished.")
